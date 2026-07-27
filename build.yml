@@ -1,0 +1,41 @@
+name: Build Windows EXE
+
+# Runs automatically on every push to main, and can also be triggered
+# manually from the Actions tab in GitHub ("Run workflow" button).
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    # This is the key line: even though you're pushing from Linux,
+    # GitHub runs this job on an actual Windows machine, so PyInstaller
+    # produces a real Windows .exe.
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build single-file exe
+        run: >
+          pyinstaller --onefile --windowed
+          --name BarcodeLookup
+          barcode_lookup.py
+
+      # Uploads dist/BarcodeLookup.exe as a downloadable build artifact.
+      # Find it under the workflow run's "Artifacts" section on GitHub.
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BarcodeLookup-windows-exe
+          path: dist/BarcodeLookup.exe
