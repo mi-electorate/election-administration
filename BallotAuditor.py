@@ -297,7 +297,7 @@ class BallotAuditor:
     def show_about(self):
         log_line = f"Scan debug log: {SCAN_DEBUG_LOG_PATH}" if SCAN_DEBUG_LOG_ENABLED else "Scan debug log: disabled"
         messagebox.showinfo(
-            "Ballot Auditor v2.0",
+            "Ballot Auditor v2.1",
             "Ballot Auditor\n\n"
             "Loads and sorts a QVF CSV,  displays it as a sortable table. "
             "Highlights given VoterID records."
