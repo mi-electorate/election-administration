@@ -1,8 +1,5 @@
 # election-administration
-clerical tools, starting from our (translated) ballot audit tool
-
-# election-administration
-clerical tools, starting from our (translated) ballot audit tool
+clerical tools
 
 ## Ballot Auditor 2026
 
