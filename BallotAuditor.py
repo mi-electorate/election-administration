@@ -125,6 +125,11 @@ SCAN_DEBUG_LOG_ENABLED = False
 
 SCAN_DEBUG_LOG_PATH = _APP_DIR / "scan_debug.log"
 
+# Font used for the top control bar (Open CSV / Scan barcode / About /
+# Found & Not Found counters) -- kept larger than Tk's small default so
+# it's easy to read at a glance during fast manual scanning sessions.
+TOP_BAR_FONT = ("", 14)
+
 
 class BallotAuditor:
     def __init__(self, root):
@@ -178,13 +183,13 @@ class BallotAuditor:
         top_frame = tk.Frame(self.root, padx=8, pady=8)
         top_frame.pack(side=tk.TOP, fill=tk.X)
 
-        open_btn = tk.Button(top_frame, text="Open CSV...", command=self.on_open_csv)
+        open_btn = tk.Button(top_frame, text="Open CSV...", font=TOP_BAR_FONT, command=self.on_open_csv)
         open_btn.pack(side=tk.LEFT)
 
         # --- Barcode scan entry box ---
-        tk.Label(top_frame, text="Scan barcode:").pack(side=tk.LEFT)
+        tk.Label(top_frame, text="Scan barcode:", font=TOP_BAR_FONT).pack(side=tk.LEFT, padx=(12, 0))
         self.scan_var = tk.StringVar()
-        self.scan_entry = tk.Entry(top_frame, textvariable=self.scan_var, width=30)
+        self.scan_entry = tk.Entry(top_frame, textvariable=self.scan_var, width=30, font=TOP_BAR_FONT)
         self.scan_entry.pack(side=tk.LEFT, padx=(4, 0))
         # Barcode scanners "type" the code then send Enter (Return) as the
         # last keystroke. Binding <Return> on this Entry is all we need --
@@ -199,18 +204,25 @@ class BallotAuditor:
         # --- Right side of the top bar: running counts + About ---
         # Packed in this order (About first) so side=RIGHT stacks them
         # left of About, giving the visual order: Found | Not Found | About
-        about_btn = tk.Button(top_frame, text="About", command=self.show_about)
+        about_btn = tk.Button(top_frame, text="About", font=TOP_BAR_FONT, command=self.show_about)
         about_btn.pack(side=tk.RIGHT, padx=(8, 0))
 
+        # Found/Not Found are buttons rather than plain labels -- pressing
+        # either one clears BOTH counts (and the matched-row highlighting)
+        # at once, e.g. to start a fresh tally partway through a session
+        # without having to reload the CSV. See on_reset_counts, which
+        # confirms first since this can't be undone.
         self.not_found_count_var = tk.StringVar(value="Not Found: 0")
-        tk.Label(top_frame, textvariable=self.not_found_count_var, fg="#c0392b").pack(
-            side=tk.RIGHT, padx=(8, 0)
-        )
+        tk.Button(
+            top_frame, textvariable=self.not_found_count_var, font=TOP_BAR_FONT,
+            fg="#c0392b", relief=tk.FLAT, command=self.on_reset_counts,
+        ).pack(side=tk.RIGHT, padx=(8, 0))
 
         self.found_count_var = tk.StringVar(value="Found: 0")
-        tk.Label(top_frame, textvariable=self.found_count_var, fg="#1a7d3a").pack(
-            side=tk.RIGHT, padx=(8, 0)
-        )
+        tk.Button(
+            top_frame, textvariable=self.found_count_var, font=TOP_BAR_FONT,
+            fg="#1a7d3a", relief=tk.FLAT, command=self.on_reset_counts,
+        ).pack(side=tk.RIGHT, padx=(8, 0))
 
         # --- Table (Treeview) ---
         table_frame = tk.Frame(self.root)
@@ -301,6 +313,38 @@ class BallotAuditor:
         if not path:
             return
         self.load_csv(path)
+
+    def on_reset_counts(self):
+        """
+        Clear the Found and Not Found tallies (and the green matched-row
+        highlighting) without reloading the CSV -- e.g. starting a fresh
+        physical stack/tally partway through a session. The underlying
+        records/table are untouched; only session scan state resets.
+
+        No confirmation prompt: these counts are informational only (a
+        side interest, not something the clerk relies on for the actual
+        precinct/completeness check -- that's the unhighlighted rows in
+        the table itself, which this doesn't touch), so there's nothing
+        here worth interrupting a fast reset for.
+        """
+        if not self.records:
+            return
+        if self.found_count == 0 and self.not_found_count == 0:
+            return  # nothing to clear
+
+        for row_index in self.matched_indices:
+            item_id = self.row_id_by_index.get(row_index)
+            if item_id is not None:
+                self.tree.item(item_id, tags=())
+
+        self.matched_indices = set()
+        self.not_found_values = set()
+        self.found_count = 0
+        self.not_found_count = 0
+        self.found_count_var.set("Found: 0")
+        self.not_found_count_var.set("Not Found: 0")
+        self.status_var.set("Found/Not Found counts cleared.")
+        self.scan_entry.focus_set()
 
     def load_csv(self, path):
         try:
@@ -488,9 +532,17 @@ class BallotAuditor:
 
         # Reset the Treeview's columns to the compact display set (not the
         # full CSV) -- click a row to see every field in a popup instead.
+        # A leading "#" column shows each row's position in the sorted
+        # order (1, 2, 3, ...) -- this is the manual-tabulation sequence
+        # number clerks count against as they work through the stack of
+        # ballots, so it needs to be visible at a glance, not just implied
+        # by row position on screen.
         self.tree.delete(*self.tree.get_children())
         display_labels = [label for label, _actual_key in self.display_columns]
-        self.tree["columns"] = display_labels
+        all_labels = ["#"] + display_labels
+        self.tree["columns"] = all_labels
+        self.tree.heading("#", text="#")
+        self.tree.column("#", width=50, anchor="e", stretch=False)
         for label in display_labels:
             self.tree.heading(label, text=label)
             self.tree.column(label, width=120, anchor="w")
@@ -502,6 +554,7 @@ class BallotAuditor:
             # default; replace embedded newlines with a visible marker so
             # multiline quoted fields don't look broken in the grid.
             values = [v.replace("\n", " / ").replace("\r", "") for v in values]
+            values = [i + 1] + values  # sequential record number, 1-based
             item_id = self.tree.insert("", "end", iid=str(i), values=values)
             self.row_id_by_index[i] = item_id
 
