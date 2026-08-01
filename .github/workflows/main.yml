@@ -27,12 +27,26 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build single-file exe
+        # --icon sets the icon on the built .exe itself -- Explorer, the
+        # taskbar, the desktop shortcut.
+        #
+        # --add-data bundles the .ico and .png into the onefile exe so
+        # they're available at runtime for the window/taskbar icon
+        # (iconbitmap, needs the .ico) and the About dialog's logo image
+        # (PhotoImage, needs the .png) -- see ICON_ICO_PATH/ICON_PNG_PATH
+        # in BallotAuditor.py, which resolve these via sys._MEIPASS in a
+        # frozen build. Windows uses ";" as the --add-data separator
+        # (this job runs on windows-latest); it'd need to be ":" on
+        # macOS/Linux.
         run: >
           pyinstaller --onefile --windowed
           --name BallotAuditor
+          --icon MIElectorate.ico
+          --add-data "MIElectorate.ico;."
+          --add-data "MIElectorate.png;."
           BallotAuditor.py
 
-      # Uploads dist/BarcodeLookup.exe as a downloadable build artifact.
+      # Uploads dist/BallotAuditor.exe as a downloadable build artifact.
       # Find it under the workflow run's "Artifacts" section on GitHub.
       - name: Upload exe artifact
         uses: actions/upload-artifact@v4
