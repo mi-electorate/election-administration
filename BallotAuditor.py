@@ -125,6 +125,32 @@ SCAN_DEBUG_LOG_ENABLED = False
 
 SCAN_DEBUG_LOG_PATH = _APP_DIR / "scan_debug.log"
 
+# Version shown in the About dialog. Bump this by hand whenever a build
+# ships -- it's just a display string, nothing reads/parses it.
+APP_VERSION = "2.2"
+
+# Where PyInstaller's --onefile mode actually unpacks bundled data files
+# (via --add-data) at runtime -- a per-launch temp folder, NOT the folder
+# the .exe itself lives in. This is deliberately separate from _APP_DIR
+# above: _APP_DIR is "where does the operator find files this app
+# writes" (the debug log), while _BUNDLE_DIR is "where does this app
+# find files it ships with" (the icon). Conflating the two would break
+# the icon lookup in a onefile build, since sys.executable's folder
+# doesn't contain the unpacked data files.
+if getattr(sys, "frozen", False):
+    _BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", _APP_DIR))
+else:
+    _BUNDLE_DIR = Path(__file__).resolve().parent
+
+# .ico for the window/taskbar icon (Tk's iconbitmap wants the native
+# Windows icon format); .png for the About dialog's embedded image (Tk's
+# PhotoImage loads PNG natively since Tk 8.6 -- no Pillow dependency
+# needed just to show a logo in a dialog). Both must be committed to the
+# repo and both must be listed as --add-data sources in the PyInstaller
+# build step, or a onefile .exe won't have them at runtime.
+ICON_ICO_PATH = _BUNDLE_DIR / "MIElectorate.ico"
+ICON_PNG_PATH = _BUNDLE_DIR / "MIElectorate.png"
+
 # Font used for the top control bar (Open CSV / Scan barcode / About /
 # Found & Not Found counters) -- kept larger than Tk's small default so
 # it's easy to read at a glance during fast manual scanning sessions.
@@ -153,6 +179,18 @@ class BallotAuditor:
             x = (screen_w - width) // 2
             y = (screen_h - height) // 2
             self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+        # Sets the title-bar/taskbar icon for this window AND -- via
+        # default=, a Tk feature -- for every Toplevel created afterward
+        # that doesn't set its own icon (the not-found warning, record
+        # details, About), so this one call covers the whole app rather
+        # than needing to repeat it at every popup site. Windows-only
+        # (.ico); wrapped in try/except since Tk on Linux (used for
+        # development) generally can't load .ico at all.
+        try:
+            self.root.iconbitmap(default=str(ICON_ICO_PATH))
+        except tk.TclError:
+            pass
 
         # ---- Data state ----
         self.records = []          # list of dicts, one per CSV row
@@ -295,15 +333,55 @@ class BallotAuditor:
     # CSV loading
     # ------------------------------------------------------------------
     def show_about(self):
+        """
+        A custom dialog rather than messagebox.showinfo() -- the stock
+        messagebox has no way to embed an image, and showing the county's
+        logo here was specifically requested. Loaded from ICON_PNG_PATH
+        (not the .ico) because Tk's PhotoImage only speaks a handful of
+        formats itself, but PNG is one of them as of Tk 8.6 -- no Pillow
+        or other extra dependency needed just for this.
+        """
         log_line = f"Scan debug log: {SCAN_DEBUG_LOG_PATH}" if SCAN_DEBUG_LOG_ENABLED else "Scan debug log: disabled"
-        messagebox.showinfo(
-            "Ballot Auditor v2.1",
-            "Ballot Auditor\n\n"
-            "Loads and sorts a QVF CSV,  displays it as a sortable table. "
-            "Highlights given VoterID records."
-            "Click any row in the table to see its full record details.\n\n"
-            f"{log_line}",
-        )
+
+        popup = tk.Toplevel(self.root)
+        popup.title(f"About Ballot Auditor v{APP_VERSION}")
+        popup.transient(self.root)
+        popup.resizable(False, False)
+
+        container = tk.Frame(popup, padx=24, pady=20)
+        container.pack()
+
+        # Missing/unreadable icon file shouldn't block the About dialog
+        # itself from opening -- keep a reference on self so the image
+        # isn't garbage-collected out from under the Label the moment
+        # this method returns (a classic Tkinter PhotoImage gotcha).
+        try:
+            self._about_logo_image = tk.PhotoImage(file=str(ICON_PNG_PATH))
+            tk.Label(container, image=self._about_logo_image).pack(pady=(0, 12))
+        except tk.TclError:
+            pass
+
+        tk.Label(
+            container, text=f"Ballot Auditor v{APP_VERSION}", font=("", 12, "bold"),
+        ).pack()
+        tk.Label(
+            container,
+            text=(
+                "Loads and sorts a QVF CSV, displays it as a sortable table. "
+                "Highlights given VoterID records. "
+                "Click any row in the table to see its full record details."
+            ),
+            font=("", 9), wraplength=340, justify="center",
+        ).pack(pady=(8, 4))
+        tk.Label(container, text=log_line, font=("", 8), fg="#6b7280").pack(pady=(4, 14))
+
+        close_btn = tk.Button(container, text="Close", command=popup.destroy)
+        close_btn.pack()
+        popup.bind("<Escape>", lambda e: popup.destroy())
+
+        popup.focus_set()
+        popup.wait_window()
+        self.scan_entry.focus_set()
 
     def on_open_csv(self):
         path = filedialog.askopenfilename(
